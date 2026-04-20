@@ -4,6 +4,20 @@ open Lwt.Infix
 
 let ( let* ) = Result.bind
 
+let stdin_is_tty () =
+  Unix.isatty (Unix.descr_of_in_channel stdin)
+
+let stdout_is_tty () =
+  Unix.isatty (Unix.descr_of_out_channel stdout)
+
+let default_endpoints () =
+  Model.
+    {
+      download_url = "https://speed.cloudflare.com/__down";
+      upload_url = "https://speed.cloudflare.com/__up";
+      meta_url = Some "https://speed.cloudflare.com/meta";
+    }
+
 let preset_conv =
   let parse value =
     match Model.preset_of_string value with
@@ -63,9 +77,6 @@ let build_plan preset latency_samples download_parallel upload_parallel
 let run preset output download_url upload_url meta_url no_meta latency_samples
     download_parallel upload_parallel download_sizes upload_sizes timeout_s
     skip_download skip_upload live show_history history_limit no_save_history =
-  let stdout_is_tty () =
-    Unix.isatty (Unix.descr_of_out_channel stdout)
-  in
   let ansi = stdout_is_tty () in
   if skip_download && skip_upload then
     `Error (false, "At least one of download or upload must be enabled")
@@ -248,7 +259,7 @@ let no_save_history_arg =
 
 let cmd =
   let doc = "speedtest-grade OCaml CLI for quick network measurement" in
-  let info = Cmd.info "ohspeed" ~version:"0.1.0" ~doc in
+  let info = Cmd.info "ohspeed" ~version:"0.2.0" ~doc in
   let term =
     Term.(
       ret
@@ -260,4 +271,18 @@ let cmd =
   in
   Cmd.v info term
 
-let () = exit (Cmd.eval cmd)
+let wants_interactive_tui () =
+  match Array.to_list Sys.argv with
+  | [ _ ] -> stdin_is_tty () && stdout_is_tty ()
+  | [ _; "--tui" ] | [ _; "tui" ] -> true
+  | _ -> false
+
+let () =
+  if wants_interactive_tui () then
+    match App.run_interactive ~endpoints:(default_endpoints ()) () with
+    | Ok () -> exit 0
+    | Error message ->
+        prerr_endline ("ohspeed: " ^ message);
+        exit 1
+  else
+    exit (Cmd.eval cmd)

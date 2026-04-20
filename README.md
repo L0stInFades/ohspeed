@@ -8,6 +8,7 @@
 - 使用延迟分位数和带宽高分位数归约结果
 - 支持文本输出和 JSON 输出
 - 支持高性能终端实时可视化 dashboard
+- 默认启动交互式 TUI 首页
 - 彩色状态条、速率热区、迷你 sparkline 曲线
 - 持久化历史记录与历史对比图
 
@@ -38,7 +39,7 @@ curl -fsSL https://raw.githubusercontent.com/L0stInFades/ohspeed/main/scripts/in
 指定版本：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/L0stInFades/ohspeed/main/scripts/install.sh | OHSPEED_VERSION=v0.1.0 bash
+curl -fsSL https://raw.githubusercontent.com/L0stInFades/ohspeed/main/scripts/install.sh | OHSPEED_VERSION=v0.2.0 bash
 ```
 
 通过 `opam` 直接从 GitHub 安装：
@@ -57,6 +58,35 @@ dune build
 ```
 
 ## 运行
+
+直接启动交互式 TUI：
+
+```bash
+ohspeed
+```
+
+也可以显式指定：
+
+```bash
+ohspeed --tui
+```
+
+首页里可以直接选：
+
+- `Quick Burst`
+- `Balanced Sweep`
+- `Full Saturation`
+- `History Lounge`
+- `Control Deck`
+
+TUI 快捷键：
+
+- `↑/↓` 或 `j/k` 移动
+- `Enter` 进入或执行
+- `Esc` / `b` 返回
+- `q` 退出
+
+保留原来的直接命令模式：
 
 ```bash
 eval $(opam env --switch=5.4.1 --set-switch)

@@ -6,6 +6,13 @@ type session = {
   mutable last_frame : string option;
 }
 
+type interactive_settings = {
+  enable_download : bool;
+  enable_upload : bool;
+  save_history : bool;
+  history_limit : int;
+}
+
 type metric_kind =
   | Bandwidth
   | Latency
@@ -21,6 +28,12 @@ let style ~ansi code text = if ansi then code ^ text ^ reset else text
 let colorize ~ansi code text = if ansi then color256 code text else text
 let dim_text ~ansi text = if ansi then dim ^ text ^ reset else text
 let bold_text ~ansi text = if ansi then bold ^ text ^ reset else text
+
+let chip ~ansi ~fg ~bg text =
+  if ansi then
+    esc (Printf.sprintf "38;5;%d;48;5;%dm" fg bg) ^ " " ^ text ^ " " ^ reset
+  else
+    "[" ^ text ^ "]"
 
 let repeat s count =
   let buffer = Buffer.create (max 0 count * String.length s) in
@@ -308,6 +321,272 @@ let metric_row ~ansi ~label ~kind value_opt =
 
 let row ~label ~value =
   pad_right 12 label ^ " " ^ value
+
+let bool_chip ~ansi label enabled =
+  if enabled then
+    chip ~ansi ~fg:16 ~bg:118 (label ^ " on")
+  else
+    chip ~ansi ~fg:252 ~bg:238 (label ^ " off")
+
+let latest_history_entry (history : History.entry list) =
+  match List.rev history with
+  | latest :: _ -> Some latest
+  | [] -> None
+
+let latest_history_metrics (history : History.entry list) =
+  let latest = latest_history_entry history in
+  let current_latency =
+    Option.bind latest (fun (entry : History.entry) -> entry.idle_latency_ms)
+  in
+  let current_download =
+    Option.bind latest (fun (entry : History.entry) -> entry.download_bps)
+  in
+  let current_upload =
+    Option.bind latest (fun (entry : History.entry) -> entry.upload_bps)
+  in
+  (current_latency, current_download, current_upload)
+
+let home_entries =
+  [|
+    (45, "Quick Burst", "Run the shortest low-latency speed check.", "1");
+    (118, "Balanced Sweep", "Use the default profile for a solid signal.", "2");
+    (201, "Full Saturation", "Push the line harder with the longest run.", "3");
+    (214, "History Lounge", "Browse saved runs and compare trends.", "H");
+    (111, "Control Deck", "Toggle stages, autosave, and history window.", "S");
+    (240, "Quit", "Leave the dashboard and restore the terminal.", "Q");
+  |]
+
+let render_home_menu_lines ~ansi ~selected =
+  home_entries
+  |> Array.to_list
+  |> List.mapi (fun index (accent, title, subtitle, hotkey) ->
+         let active = index = selected in
+         let marker =
+           if active then colorize ~ansi accent "▶" else dim_text ~ansi "•"
+         in
+         let hotkey_chip =
+           if active then chip ~ansi ~fg:16 ~bg:accent hotkey
+           else chip ~ansi ~fg:252 ~bg:238 hotkey
+         in
+         let title_text =
+           if active then bold_text ~ansi title else title
+         in
+         [
+           marker ^ " " ^ hotkey_chip ^ " " ^ title_text;
+           "      " ^ dim_text ~ansi subtitle;
+           if index = Array.length home_entries - 1 then ""
+           else dim_text ~ansi (repeat "·" 42);
+         ])
+  |> List.flatten
+
+let focus_lines ~ansi ~selected ~(history : History.entry list) ~settings =
+  let latest = latest_history_entry history in
+  let latest_server =
+    match latest with
+    | None -> dim_text ~ansi "No saved run yet"
+    | Some entry -> server_string entry.server
+  in
+  match selected with
+  | 0 | 1 | 2 ->
+      let preset =
+        match selected with
+        | 0 -> Model.Quick
+        | 1 -> Balanced
+        | _ -> Full
+      in
+      let plan = Model.plan_of_preset preset in
+      [
+        row ~label:"Focus"
+          ~value:(bold_text ~ansi (Array.get home_entries selected |> fun (_, title, _, _) -> title));
+        row ~label:"Preset" ~value:(Model.preset_to_string preset);
+        row ~label:"Latency"
+          ~value:(Printf.sprintf "%d samples" plan.latency_samples);
+        row ~label:"Download"
+          ~value:
+            (Printf.sprintf "%d lanes / %d stages" plan.download_parallel
+               (List.length plan.download_sizes));
+        row ~label:"Upload"
+          ~value:
+            (Printf.sprintf "%d lanes / %d stages" plan.upload_parallel
+               (List.length plan.upload_sizes));
+        row ~label:"Timeout"
+          ~value:(Printf.sprintf "%.0fs per request" plan.request_timeout_s);
+        "";
+        row ~label:"Server" ~value:latest_server;
+        row ~label:"Download" ~value:(bool_chip ~ansi "download" settings.enable_download);
+        row ~label:"Upload" ~value:(bool_chip ~ansi "upload" settings.enable_upload);
+        row ~label:"History" ~value:(bool_chip ~ansi "autosave" settings.save_history);
+        row ~label:"Window"
+          ~value:(chip ~ansi ~fg:16 ~bg:45 (Printf.sprintf "%d runs" settings.history_limit));
+      ]
+  | 3 ->
+      let run_count = List.length history in
+      [
+        row ~label:"Focus"
+          ~value:(bold_text ~ansi "History Lounge");
+        row ~label:"Saved runs" ~value:(string_of_int run_count);
+        row ~label:"Window"
+          ~value:(chip ~ansi ~fg:16 ~bg:214 (Printf.sprintf "%d runs" settings.history_limit));
+        row ~label:"File" ~value:(History.file_path ());
+        "";
+        row ~label:"Latest" ~value:latest_server;
+        row ~label:"Open"
+          ~value:(dim_text ~ansi "Press Enter to open the history dashboard.");
+      ]
+  | 4 ->
+      [
+        row ~label:"Focus"
+          ~value:(bold_text ~ansi "Control Deck");
+        row ~label:"Download" ~value:(bool_chip ~ansi "download" settings.enable_download);
+        row ~label:"Upload" ~value:(bool_chip ~ansi "upload" settings.enable_upload);
+        row ~label:"Autosave" ~value:(bool_chip ~ansi "history" settings.save_history);
+        row ~label:"Window"
+          ~value:(chip ~ansi ~fg:16 ~bg:111 (Printf.sprintf "%d runs" settings.history_limit));
+        "";
+        row ~label:"Hint"
+          ~value:(dim_text ~ansi "Use Enter to tune the runtime switches.");
+      ]
+  | _ ->
+      [
+        row ~label:"Focus"
+          ~value:(bold_text ~ansi "Quit");
+        row ~label:"Action"
+          ~value:(dim_text ~ansi "Restore the terminal and exit the app.");
+        row ~label:"State"
+          ~value:(Printf.sprintf "%d saved runs available" (List.length history));
+      ]
+
+let settings_entries ~settings =
+  [|
+    ("Download stage", if settings.enable_download then "enabled" else "disabled");
+    ("Upload stage", if settings.enable_upload then "enabled" else "disabled");
+    ("Auto-save runs", if settings.save_history then "enabled" else "disabled");
+    ("History window", Printf.sprintf "%d runs" settings.history_limit);
+    ("Back", "return to launch pad");
+  |]
+
+let render_settings_menu_lines ~ansi ~settings ~selected =
+  settings_entries ~settings
+  |> Array.to_list
+  |> List.mapi (fun index (title, value) ->
+         let active = index = selected in
+         let marker =
+           if active then colorize ~ansi 111 "▶" else dim_text ~ansi "•"
+         in
+         let value_chip =
+           if index = 4 then chip ~ansi ~fg:16 ~bg:240 "back"
+           else if active then chip ~ansi ~fg:16 ~bg:111 value
+           else chip ~ansi ~fg:252 ~bg:238 value
+         in
+         [
+           marker ^ " " ^ (if active then bold_text ~ansi title else title) ^ "  "
+           ^ value_chip;
+           "      "
+           ^ dim_text ~ansi
+               (if index = 4 then "Return to the home screen."
+                else "Use Enter or ←/→ to change this value.");
+         ])
+  |> List.flatten
+
+let settings_detail_lines ~ansi ~selected ~settings =
+  match selected with
+  | 0 ->
+      [
+        row ~label:"Download"
+          ~value:(bool_chip ~ansi "throughput" settings.enable_download);
+        row ~label:"Effect"
+          ~value:(dim_text ~ansi "Controls the concurrent GET stage.");
+        row ~label:"Use"
+          ~value:(dim_text ~ansi "Disable this when you only care about upload.");
+      ]
+  | 1 ->
+      [
+        row ~label:"Upload"
+          ~value:(bool_chip ~ansi "throughput" settings.enable_upload);
+        row ~label:"Effect"
+          ~value:(dim_text ~ansi "Controls the concurrent POST stage.");
+        row ~label:"Use"
+          ~value:(dim_text ~ansi "Disable this for download-only checks.");
+      ]
+  | 2 ->
+      [
+        row ~label:"Autosave"
+          ~value:(bool_chip ~ansi "history" settings.save_history);
+        row ~label:"File" ~value:(History.file_path ());
+        row ~label:"Effect"
+          ~value:(dim_text ~ansi "Saved runs feed the comparison dashboard.");
+      ]
+  | 3 ->
+      [
+        row ~label:"History"
+          ~value:(chip ~ansi ~fg:16 ~bg:111 (Printf.sprintf "%d runs" settings.history_limit));
+        row ~label:"Effect"
+          ~value:(dim_text ~ansi "Changes how many past runs fill the panels.");
+        row ~label:"Keys"
+          ~value:(dim_text ~ansi "Use left/right to cycle the window size.");
+      ]
+  | _ ->
+      [
+        row ~label:"Back"
+          ~value:(dim_text ~ansi "Return to the launch pad.");
+        row ~label:"Keys"
+          ~value:(dim_text ~ansi "Press Enter, Esc, or b.");
+      ]
+
+let report_curve_line width direction =
+  match direction with
+  | None -> repeat "·" width
+  | Some direction ->
+      direction.samples
+      |> List.map (fun sample -> sample.bps /. 1_000_000.)
+      |> sparkline ~width
+
+let result_left_lines ~ansi (report : Model.report) =
+  [
+    row ~label:"Preset" ~value:(Model.preset_to_string report.preset);
+    row ~label:"Server" ~value:(server_string report.server);
+    row ~label:"Stamp" ~value:(timestamp_string report.generated_at);
+    "";
+    metric_row ~ansi ~label:"Idle RTT" ~kind:Latency report.idle_latency_ms;
+    metric_row ~ansi ~label:"Idle jitter" ~kind:Latency report.idle_jitter_ms;
+    metric_row ~ansi ~label:"Download" ~kind:Bandwidth
+      (Option.bind report.download (fun direction -> direction.bandwidth_bps));
+    metric_row ~ansi ~label:"Upload" ~kind:Bandwidth
+      (Option.bind report.upload (fun direction -> direction.bandwidth_bps));
+  ]
+
+let result_right_lines ~ansi (report : Model.report) =
+  [
+    row ~label:"Idle curve" ~value:(sparkline ~width:30 report.idle_points);
+    row ~label:"Download" ~value:(report_curve_line 30 report.download);
+    row ~label:"Upload" ~value:(report_curve_line 30 report.upload);
+    row ~label:"DL chunk"
+      ~value:
+        (match report.download with
+        | Some direction -> (
+            match direction.selected_request_bytes with
+            | Some bytes -> human_bytes bytes
+            | None -> "n/a")
+        | None -> "n/a");
+    row ~label:"UL chunk"
+      ~value:
+        (match report.upload with
+        | Some direction -> (
+            match direction.selected_request_bytes with
+            | Some bytes -> human_bytes bytes
+            | None -> "n/a")
+        | None -> "n/a");
+    row ~label:"DL loaded"
+      ~value:
+        (match report.download with
+        | Some direction -> maybe_ms direction.loaded_latency_ms
+        | None -> "n/a");
+    row ~label:"UL loaded"
+      ~value:
+        (match report.upload with
+        | Some direction -> maybe_ms direction.loaded_latency_ms
+        | None -> "n/a");
+  ]
 
 let panel ~width ~title lines =
   let inner = max 1 (width - 2) in
@@ -607,6 +886,137 @@ let render_history ~ansi ~history =
         row ~label:"Saved file" ~value:(History.file_path ());
         row ~label:"Runs" ~value:(string_of_int (List.length history));
       ]
+
+let render_home ~ansi ~history ~settings ~selected =
+  let current_latency, current_download, current_upload =
+    latest_history_metrics history
+  in
+  assemble_dashboard ~title:" ohspeed Launch Pad "
+    ~left_title:" Actions "
+    ~left_lines:(render_home_menu_lines ~ansi ~selected)
+    ~right_title:" Focus "
+    ~right_lines:(focus_lines ~ansi ~selected ~history ~settings)
+    ~history_title:" Network Story "
+    ~history_lines:
+      (history_summary_lines ~ansi ~current_latency ~current_download
+         ~current_upload history)
+    ~footer_lines:
+      [
+        row ~label:"Mode" ~value:(bold_text ~ansi "interactive hub");
+        row ~label:"Keys"
+          ~value:
+            (dim_text ~ansi
+               "↑/↓ or j/k move  Enter launch  h history  s settings  q quit");
+        row ~label:"Switches"
+          ~value:
+            (bool_chip ~ansi "download" settings.enable_download ^ " "
+           ^ bool_chip ~ansi "upload" settings.enable_upload ^ " "
+           ^ bool_chip ~ansi "save" settings.save_history);
+      ]
+
+let render_settings ~ansi ~history ~settings ~selected =
+  let current_latency, current_download, current_upload =
+    latest_history_metrics history
+  in
+  assemble_dashboard ~title:" ohspeed Control Deck "
+    ~left_title:" Tunables "
+    ~left_lines:(render_settings_menu_lines ~ansi ~settings ~selected)
+    ~right_title:" Detail "
+    ~right_lines:(settings_detail_lines ~ansi ~selected ~settings)
+    ~history_title:" Recent Network Story "
+    ~history_lines:
+      (history_summary_lines ~ansi ~current_latency ~current_download
+         ~current_upload history)
+    ~footer_lines:
+      [
+        row ~label:"Mode" ~value:(bold_text ~ansi "settings");
+        row ~label:"Keys"
+          ~value:(dim_text ~ansi "↑/↓ move  Enter or ←/→ change  Esc or b back");
+        row ~label:"Window"
+          ~value:(chip ~ansi ~fg:16 ~bg:111 (Printf.sprintf "%d runs" settings.history_limit));
+      ]
+
+let render_history_browser ~ansi ~history ~settings =
+  let current_latency, current_download, current_upload =
+    latest_history_metrics history
+  in
+  assemble_dashboard ~title:" ohspeed History Lounge "
+    ~left_title:" Recent Runs "
+    ~left_lines:(history_table_lines ~ansi history)
+    ~right_title:" Trend Curves "
+    ~right_lines:
+      [
+        row ~label:"Latency"
+          ~value:
+            (sparkline ~width:36
+               (history
+               |> List.filter_map (fun (entry : History.entry) ->
+                      entry.idle_latency_ms)));
+        row ~label:"Download"
+          ~value:
+            (sparkline ~width:36
+               (history
+               |> List.filter_map (fun (entry : History.entry) ->
+                      Option.map (fun value -> value /. 1_000_000.) entry.download_bps)));
+        row ~label:"Upload"
+          ~value:
+            (sparkline ~width:36
+               (history
+               |> List.filter_map (fun (entry : History.entry) ->
+                      Option.map (fun value -> value /. 1_000_000.) entry.upload_bps)));
+        "";
+        row ~label:"Saved file" ~value:(History.file_path ());
+        row ~label:"Window"
+          ~value:(chip ~ansi ~fg:16 ~bg:214 (Printf.sprintf "%d runs" settings.history_limit));
+      ]
+    ~history_title:" Aggregate Compare "
+    ~history_lines:
+      (history_summary_lines ~ansi ~current_latency ~current_download
+         ~current_upload history)
+    ~footer_lines:
+      [
+        row ~label:"Mode" ~value:(bold_text ~ansi "history browser");
+        row ~label:"Keys" ~value:(dim_text ~ansi "b or Esc back  q quit");
+        row ~label:"Runs" ~value:(string_of_int (List.length history));
+      ]
+
+let render_result ~ansi ~history ~settings ~(report : Model.report) =
+  let current_download =
+    Option.bind report.download (fun direction -> direction.bandwidth_bps)
+  in
+  let current_upload =
+    Option.bind report.upload (fun direction -> direction.bandwidth_bps)
+  in
+  assemble_dashboard ~title:" ohspeed Results "
+    ~left_title:" Summary "
+    ~left_lines:(result_left_lines ~ansi report)
+    ~right_title:" Curves "
+    ~right_lines:(result_right_lines ~ansi report)
+    ~history_title:" Compare Against History "
+    ~history_lines:
+      (history_summary_lines ~ansi ~current_latency:report.idle_latency_ms
+         ~current_download ~current_upload history)
+    ~footer_lines:
+      [
+        row ~label:"Mode" ~value:(bold_text ~ansi "post-run review");
+        row ~label:"Keys"
+          ~value:(dim_text ~ansi "Enter rerun  h history  b home  q quit");
+        row ~label:"Save"
+          ~value:
+            (if settings.save_history then
+               chip ~ansi ~fg:16 ~bg:118 "autosave on"
+             else
+               chip ~ansi ~fg:252 ~bg:238 "autosave off");
+      ]
+
+let render_notice ~ansi ~title ~subtitle ~detail_lines ~footer_lines =
+  let width = max 80 (terminal_columns ()) in
+  String.concat "\n"
+    (panel ~width ~title
+       ([ row ~label:"Status" ~value:(bold_text ~ansi subtitle); "" ]
+       @ detail_lines
+       @ [ "" ]
+       @ footer_lines))
 
 let create_session out = { out; started = false; last_frame = None }
 
