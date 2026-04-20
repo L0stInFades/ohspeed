@@ -44,21 +44,6 @@ let maybe_bps = function
   | None -> "n/a"
   | Some value -> human_bps value
 
-let progress_bar ~width completed total =
-  if total <= 0 then
-    "[----------]"
-  else
-    let ratio = float_of_int completed /. float_of_int total in
-    let filled =
-      int_of_float
-        (Float.round (Float.max 0. (Float.min 1. ratio) *. float_of_int width))
-    in
-    let filled = Int.min width filled in
-    "[" ^ String.make filled '#' ^ String.make (width - filled) '-' ^ "]"
-
-let elapsed_string started_at =
-  Fmt.str "%.1fs" (Unix.gettimeofday () -. started_at)
-
 let timestamp_string timestamp =
   let tm = Unix.localtime timestamp in
   Fmt.str "%04d-%02d-%02d %02d:%02d:%02d"
@@ -90,26 +75,6 @@ let add_line buffer fmt =
       Buffer.add_char buffer '\n')
     fmt
 
-let latest_sample_bps direction =
-  match List.rev direction.samples with
-  | [] -> None
-  | sample :: _ -> Some sample.bps
-
-let render_phase = function
-  | Fetching_meta -> ("metadata lookup", None)
-  | Idle_latency { completed; total } ->
-      ( Fmt.str "idle latency %d/%d" completed total,
-        Some (progress_bar ~width:24 completed total) )
-  | Downloading { set_index; total_sets; request_bytes; completed; total } ->
-      ( Fmt.str "download set %d/%d @ %s" set_index total_sets
-          (human_bytes request_bytes),
-        Some (progress_bar ~width:24 completed total) )
-  | Uploading { set_index; total_sets; request_bytes; completed; total } ->
-      ( Fmt.str "upload set %d/%d @ %s" set_index total_sets
-          (human_bytes request_bytes),
-        Some (progress_bar ~width:24 completed total) )
-  | Finished -> ("finished", None)
-
 let render_direction buffer label direction =
   match direction with
   | None -> add_line buffer "%-16s skipped" label
@@ -140,53 +105,6 @@ let render_text (report : Model.report) =
   render_direction buffer "Download" report.download;
   add_line buffer "";
   render_direction buffer "Upload" report.upload;
-  Buffer.contents buffer |> String.trim
-
-let render_live_direction buffer label enabled direction =
-  if not enabled then
-    add_line buffer "%-16s skipped" label
-  else
-    match direction with
-    | None -> add_line buffer "%-16s pending" label
-    | Some direction ->
-        add_line buffer "%-16s %s" label (maybe_bps direction.bandwidth_bps);
-        add_line buffer "%-16s %s" (label ^ " latest")
-          (maybe_bps (latest_sample_bps direction));
-        add_line buffer "%-16s %s" (label ^ " loaded")
-          (maybe_ms direction.loaded_latency_ms);
-        add_line buffer "%-16s %s" (label ^ " jitter")
-          (maybe_ms direction.loaded_jitter_ms);
-        add_line buffer "%-16s %d / %d qualified"
-          (label ^ " samples") direction.qualified_samples
-          (List.length direction.samples);
-        add_line buffer "%-16s %s"
-          (label ^ " chunk")
-          (match direction.selected_request_bytes with
-          | None -> "n/a"
-          | Some bytes -> human_bytes bytes)
-
-let render_live (progress : Model.progress) =
-  let buffer = Buffer.create 768 in
-  let phase_text, phase_bar = render_phase progress.phase in
-  add_line buffer "ohspeed Live";
-  add_line buffer "%-16s %s" "Preset" (preset_to_string progress.preset);
-  add_line buffer "%-16s %s" "Elapsed" (elapsed_string progress.started_at);
-  add_line buffer "%-16s %s" "Phase" phase_text;
-  (match phase_bar with
-  | None -> ()
-  | Some bar -> add_line buffer "%-16s %s" "Progress" bar);
-  add_line buffer "%-16s %s" "Server" (server_string progress.server);
-  add_line buffer "";
-  add_line buffer "%-16s %s" "Idle latency"
-    (maybe_ms (Stats.percentile progress.idle_points 0.5));
-  add_line buffer "%-16s %s" "Idle jitter"
-    (maybe_ms (Stats.jitter progress.idle_points));
-  add_line buffer "%-16s %d" "Idle samples" (List.length progress.idle_points);
-  add_line buffer "";
-  render_live_direction buffer "Download" progress.download_enabled
-    progress.download;
-  add_line buffer "";
-  render_live_direction buffer "Upload" progress.upload_enabled progress.upload;
   Buffer.contents buffer |> String.trim
 
 let json_of_option json_of = function

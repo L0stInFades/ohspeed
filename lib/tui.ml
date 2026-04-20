@@ -23,8 +23,6 @@ let bold = esc "1m"
 let dim = esc "2m"
 
 let color256 code text = esc (Printf.sprintf "38;5;%dm" code) ^ text ^ reset
-let bg256 code text = esc (Printf.sprintf "48;5;%dm" code) ^ text ^ reset
-let style ~ansi code text = if ansi then code ^ text ^ reset else text
 let colorize ~ansi code text = if ansi then color256 code text else text
 let dim_text ~ansi text = if ansi then dim ^ text ^ reset else text
 let bold_text ~ansi text = if ansi then bold ^ text ^ reset else text
