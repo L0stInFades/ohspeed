@@ -10,6 +10,7 @@
 - 支持文本输出和 JSON 输出
 - 支持高性能终端实时可视化 dashboard
 - 默认启动交互式 TUI 首页
+- 重构版全屏 TUI：launch pad、live deck、result deck、history lounge
 - 彩色状态条、速率热区、迷你 sparkline 曲线
 - 持久化历史记录与历史对比图
 
@@ -40,7 +41,7 @@ curl -fsSL https://raw.githubusercontent.com/L0stInFades/ohspeed/main/scripts/in
 指定版本：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/L0stInFades/ohspeed/main/scripts/install.sh | OHSPEED_VERSION=v0.3.0 bash
+curl -fsSL https://raw.githubusercontent.com/L0stInFades/ohspeed/main/scripts/install.sh | OHSPEED_VERSION=v0.4.0 bash
 ```
 
 通过 `opam` 直接从 GitHub 安装：
