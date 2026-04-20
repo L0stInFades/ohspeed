@@ -94,12 +94,28 @@ let fit_visible width s =
     in
     loop 0 0 false
 
+let truncate_visible width text =
+  if width <= 0 then ""
+  else if visible_width text <= width then
+    text
+  else if width = 1 then
+    "…"
+  else
+    fit_visible (width - 1) text ^ "…"
+
 let pad_right width text =
   let visible = visible_width text in
   if visible >= width then
-    fit_visible width text
+    truncate_visible width text
   else
     text ^ repeat " " (width - visible)
+
+let clamp low high value =
+  max low (min high value)
+
+let row_value_width width = max 8 (width - 16)
+let curve_width width = clamp 10 42 (row_value_width width)
+let summary_curve_width width = clamp 8 22 (row_value_width width / 2)
 
 let human_bps bps =
   let units =
@@ -144,6 +160,19 @@ let maybe_ms = function
 let maybe_bps = function
   | None -> "n/a"
   | Some value -> human_bps value
+
+let maybe_bps_short = function
+  | None -> "n/a"
+  | Some value when value >= 1_000_000_000. ->
+      Printf.sprintf "%.2fG" (value /. 1_000_000_000.)
+  | Some value when value >= 1_000_000. -> Printf.sprintf "%.2fM" (value /. 1_000_000.)
+  | Some value when value >= 1_000. -> Printf.sprintf "%.0fK" (value /. 1_000.)
+  | Some value -> Printf.sprintf "%.0f" value
+
+let maybe_ms_short = function
+  | None -> "n/a"
+  | Some value when value >= 100. -> Printf.sprintf "%.0fms" value
+  | Some value -> Printf.sprintf "%.2fms" value
 
 let timestamp_string timestamp =
   let tm = Unix.localtime timestamp in
@@ -346,6 +375,20 @@ let latest_history_metrics (history : History.entry list) =
   in
   (current_latency, current_download, current_upload)
 
+let menu_rail ~ansi ~accent ~width ~tick =
+  let inner = max 8 width in
+  let trail = max 2 (inner / 10) in
+  let head = tick mod inner in
+  List.init inner (fun index ->
+      let distance = abs (index - head) in
+      if distance = 0 then
+        colorize ~ansi 15 "•"
+      else if distance <= trail then
+        colorize ~ansi accent "·"
+      else
+        dim_text ~ansi "·")
+  |> String.concat ""
+
 let home_entries =
   [|
     (45, "Quick Burst", "Run the shortest low-latency speed check.", "1");
@@ -356,13 +399,17 @@ let home_entries =
     (240, "Quit", "Leave the dashboard and restore the terminal.", "Q");
   |]
 
-let render_home_menu_lines ~ansi ~selected =
+let render_home_menu_lines ~ansi ~animation_tick ~selected =
   home_entries
   |> Array.to_list
   |> List.mapi (fun index (accent, title, subtitle, hotkey) ->
          let active = index = selected in
          let marker =
-           if active then colorize ~ansi accent "▶" else dim_text ~ansi "•"
+           if active then
+             let markers = [| "▶"; "▸"; "◆"; "▸" |] in
+             colorize ~ansi accent markers.(animation_tick mod Array.length markers)
+           else
+             dim_text ~ansi "•"
          in
          let hotkey_chip =
            if active then chip ~ansi ~fg:16 ~bg:accent hotkey
@@ -375,7 +422,9 @@ let render_home_menu_lines ~ansi ~selected =
            marker ^ " " ^ hotkey_chip ^ " " ^ title_text;
            "      " ^ dim_text ~ansi subtitle;
            if index = Array.length home_entries - 1 then ""
-           else dim_text ~ansi (repeat "·" 42);
+           else
+             menu_rail ~ansi ~accent ~width:42
+               ~tick:(animation_tick + (index * 3));
          ])
   |> List.flatten
 
@@ -465,13 +514,17 @@ let settings_entries ~settings =
     ("Back", "return to launch pad");
   |]
 
-let render_settings_menu_lines ~ansi ~settings ~selected =
+let render_settings_menu_lines ~ansi ~animation_tick ~settings ~selected =
   settings_entries ~settings
   |> Array.to_list
   |> List.mapi (fun index (title, value) ->
          let active = index = selected in
          let marker =
-           if active then colorize ~ansi 111 "▶" else dim_text ~ansi "•"
+           if active then
+             let markers = [| "▶"; "▸"; "◆"; "▸" |] in
+             colorize ~ansi 111 markers.(animation_tick mod Array.length markers)
+           else
+             dim_text ~ansi "•"
          in
          let value_chip =
            if index = 4 then chip ~ansi ~fg:16 ~bg:240 "back"
@@ -555,11 +608,12 @@ let result_left_lines ~ansi (report : Model.report) =
       (Option.bind report.upload (fun direction -> direction.bandwidth_bps));
   ]
 
-let result_right_lines ~ansi (report : Model.report) =
+let result_right_lines ~ansi ~width (report : Model.report) =
+  let spark_width = curve_width width in
   [
-    row ~label:"Idle curve" ~value:(sparkline ~width:30 report.idle_points);
-    row ~label:"Download" ~value:(report_curve_line 30 report.download);
-    row ~label:"Upload" ~value:(report_curve_line 30 report.upload);
+    row ~label:"Idle curve" ~value:(sparkline ~width:spark_width report.idle_points);
+    row ~label:"Download" ~value:(report_curve_line spark_width report.download);
+    row ~label:"Upload" ~value:(report_curve_line spark_width report.upload);
     row ~label:"DL chunk"
       ~value:
         (match report.download with
@@ -679,15 +733,76 @@ let info_badge ~ansi ~accent label value =
 let brand_text ~ansi accent =
   colorize ~ansi accent (bold_text ~ansi "ohspeed")
 
-let hero_panel ~ansi ~width ~accent ~section ~headline ~subtitle ~meta_line
-    ~shortcuts =
+let spinner_frames = [| "◴"; "◷"; "◶"; "◵" |]
+
+let spinner ~ansi ~accent tick =
+  colorize ~ansi accent spinner_frames.(tick mod Array.length spinner_frames)
+
+let animated_rail ~ansi ~accent ~width ~tick =
+  let inner = max 8 width in
+  let trail = max 3 (inner / 8) in
+  let head = tick mod inner in
+  List.init inner (fun index ->
+      let distance = abs (index - head) in
+      if distance = 0 then
+        colorize ~ansi 15 "◆"
+      else if distance <= trail then
+        colorize ~ansi accent "■"
+      else
+        dim_text ~ansi "·")
+  |> String.concat ""
+
+let transition_bar ~ansi ~accent ~width progress =
+  let inner = max 8 width in
+  let filled =
+    clamp 0 inner (int_of_float (Float.round (progress *. float_of_int inner)))
+  in
+  List.init inner (fun index ->
+      if index < filled then
+        colorize ~ansi accent "■"
+      else
+        dim_text ~ansi "·")
+  |> String.concat ""
+
+let hero_panel ~ansi ~animation_tick ~width ~accent ~section ~headline
+    ~subtitle ~meta_line ~shortcuts =
   panel ~border:heavy_border ~width
     ~title:(colorize ~ansi accent (" ohspeed / " ^ section ^ " "))
     [
-      brand_text ~ansi accent ^ "  " ^ bold_text ~ansi headline;
+      brand_text ~ansi accent ^ "  " ^ bold_text ~ansi headline ^ "  "
+      ^ spinner ~ansi ~accent animation_tick;
       dim_text ~ansi subtitle;
       meta_line;
+      animated_rail ~ansi ~accent ~width:(max 12 (width - 8))
+        ~tick:animation_tick;
       shortcut_bar ~ansi shortcuts;
+    ]
+
+let render_transition ~ansi ~animation_tick ~accent ~label ~progress =
+  let width =
+    match Terminal_size.get_columns () with
+    | Some cols when cols >= 80 -> cols
+    | _ -> 120
+  in
+  let progress_text = Printf.sprintf "%.0f%%" (progress *. 100.) in
+  join_blocks
+    [
+      hero_panel ~ansi ~animation_tick ~width ~accent ~section:"transition"
+        ~headline:("Opening " ^ label)
+        ~subtitle:"Reflowing the terminal layout and warming the next deck."
+        ~meta_line:
+          (String.concat "   "
+             [
+               info_badge ~ansi ~accent "target" label;
+               info_badge ~ansi ~accent:238 "progress" progress_text;
+             ])
+        ~shortcuts:
+          [ ("LIVE", "repaint"); ("TERM", "resize"); ("FLOW", "transition") ];
+      panel ~width ~title:(colorize ~ansi accent "Transition rail")
+        [
+          transition_bar ~ansi ~accent ~width:(max 12 (width - 8)) progress;
+          dim_text ~ansi "ohspeed is rebalancing columns, panels, and focus.";
+        ];
     ]
 
 let metric_card ~ansi ~width ~accent ~label ~kind value_opt ~detail_lines =
@@ -729,8 +844,10 @@ let delta_text ~ansi ~higher_is_better current baseline =
       let prefix = if delta >= 0. then "+" else "" in
       colorize ~ansi color (Printf.sprintf "%s%.1f%%" prefix delta)
 
-let history_summary_lines ~ansi ~current_latency ~current_download ~current_upload
+let history_summary_lines ~ansi ~width ~current_latency ~current_download
+    ~current_upload
     (history : History.entry list) =
+  let spark_width = summary_curve_width width in
   let download_values =
     metric_series_of_history
       (fun (entry : History.entry) -> entry.download_bps)
@@ -752,7 +869,7 @@ let history_summary_lines ~ansi ~current_latency ~current_download ~current_uplo
   [
     row ~label:"DL trend"
       ~value:
-        (sparkline ~width:18
+        (sparkline ~width:spark_width
            (List.map (fun value -> value /. 1_000_000.) download_values)
         ^ "  cur="
         ^ maybe_bps current_download);
@@ -764,7 +881,7 @@ let history_summary_lines ~ansi ~current_latency ~current_download ~current_uplo
         ^ maybe_bps (median download_values));
     row ~label:"UL trend"
       ~value:
-        (sparkline ~width:18
+        (sparkline ~width:spark_width
            (List.map (fun value -> value /. 1_000_000.) upload_values)
         ^ "  cur="
         ^ maybe_bps current_upload);
@@ -775,7 +892,9 @@ let history_summary_lines ~ansi ~current_latency ~current_download ~current_uplo
         ^ "  median="
         ^ maybe_bps (median upload_values));
     row ~label:"RTT trend"
-      ~value:(sparkline ~width:18 latency_values ^ "  cur=" ^ maybe_ms current_latency);
+      ~value:
+        (sparkline ~width:spark_width latency_values ^ "  cur="
+       ^ maybe_ms current_latency);
     row ~label:"RTT vs prev"
       ~value:
         (delta_text ~ansi ~higher_is_better:false current_latency
@@ -801,7 +920,8 @@ let history_curves ~history =
   in
   (latency_values, download_values, upload_values)
 
-let signal_snapshot_lines ~ansi ~history =
+let signal_snapshot_lines ~ansi ~width ~history =
+  let spark_width = curve_width width in
   let latest_latency, latest_download, latest_upload =
     latest_history_metrics history
   in
@@ -817,12 +937,12 @@ let signal_snapshot_lines ~ansi ~history =
         (metric_text ~ansi Bandwidth
            (Option.map (fun value -> value /. 1_000_000.) latest_upload));
     "";
-    row ~label:"RTT curve" ~value:(sparkline ~width:28 latency_curve);
-    row ~label:"DL curve" ~value:(sparkline ~width:28 download_curve);
-    row ~label:"UL curve" ~value:(sparkline ~width:28 upload_curve);
+    row ~label:"RTT curve" ~value:(sparkline ~width:spark_width latency_curve);
+    row ~label:"DL curve" ~value:(sparkline ~width:spark_width download_curve);
+    row ~label:"UL curve" ~value:(sparkline ~width:spark_width upload_curve);
   ]
 
-let history_table_lines ?(limit = 6) ~ansi history =
+let history_table_lines ?(limit = 6) ~ansi ~width history =
   let recent =
     match history with
     | [] -> []
@@ -849,8 +969,21 @@ let history_table_lines ?(limit = 6) ~ansi history =
                 Printf.sprintf "%02d-%02d %02d:%02d" (tm.tm_mon + 1) tm.tm_mday
                   tm.tm_hour tm.tm_min)
              ~value:
-               (pad_right 5 server ^ " DL " ^ maybe_bps entry.download_bps ^ "  UL "
-              ^ maybe_bps entry.upload_bps ^ "  RTT " ^ maybe_ms entry.idle_latency_ms))
+               (let compact =
+                  Printf.sprintf "%-3s DL %s  UL %s  RTT %s" server
+                    (maybe_bps_short entry.download_bps)
+                    (maybe_bps_short entry.upload_bps)
+                    (maybe_ms_short entry.idle_latency_ms)
+                in
+                let detailed =
+                  pad_right 4 server ^ " DL " ^ maybe_bps entry.download_bps
+                  ^ "  UL " ^ maybe_bps entry.upload_bps ^ "  RTT "
+                  ^ maybe_ms entry.idle_latency_ms
+                in
+                if visible_width detailed <= row_value_width width then
+                  detailed
+                else
+                  compact))
 
 let phase_summary ~ansi = function
   | Fetching_meta ->
@@ -896,19 +1029,20 @@ let current_metric_lines ~ansi (progress : progress) =
     metric_row ~ansi ~label:"Upload" ~kind:Bandwidth upload;
   ]
 
-let curves_lines ~ansi (progress : progress) =
-  let idle_curve = sparkline ~width:28 progress.idle_points in
+let curves_lines ~ansi ~width (progress : progress) =
+  let spark_width = curve_width width in
+  let idle_curve = sparkline ~width:spark_width progress.idle_points in
   let download_curve =
     progress.download
     |> option_map [] (fun direction ->
            List.map (fun sample -> sample.bps /. 1_000_000.) direction.samples)
-    |> sparkline ~width:28
+    |> sparkline ~width:spark_width
   in
   let upload_curve =
     progress.upload
     |> option_map [] (fun direction ->
            List.map (fun sample -> sample.bps /. 1_000_000.) direction.samples)
-    |> sparkline ~width:28
+    |> sparkline ~width:spark_width
   in
   [
     row ~label:"Idle RTT" ~value:idle_curve;
@@ -938,12 +1072,13 @@ let triple_widths width =
   | [ first; second; third ] -> (first, second, third)
   | _ -> assert false
 
-let history_trend_lines ~ansi ~history =
+let history_trend_lines ~ansi ~width ~history =
+  let spark_width = curve_width width in
   let latency_curve, download_curve, upload_curve = history_curves ~history in
   [
-    row ~label:"Latency" ~value:(sparkline ~width:30 latency_curve);
-    row ~label:"Download" ~value:(sparkline ~width:30 download_curve);
-    row ~label:"Upload" ~value:(sparkline ~width:30 upload_curve);
+    row ~label:"Latency" ~value:(sparkline ~width:spark_width latency_curve);
+    row ~label:"Download" ~value:(sparkline ~width:spark_width download_curve);
+    row ~label:"Upload" ~value:(sparkline ~width:spark_width upload_curve);
     "";
     row ~label:"Median RTT" ~value:(maybe_ms (median latency_curve));
     row ~label:"Median DL"
@@ -978,7 +1113,7 @@ let history_before_report history (report : Model.report) =
       List.rev rest
   | _ -> history
 
-let render_live ~ansi ~history (progress : progress) =
+let render_live ~ansi ~animation_tick ~history (progress : progress) =
   let width = dashboard_width () in
   let accent, phase_text, detail = phase_summary ~ansi progress.phase in
   let current_latency = Stats.percentile progress.idle_points 0.5 in
@@ -989,7 +1124,8 @@ let render_live ~ansi ~history (progress : progress) =
     Option.bind progress.upload (fun direction -> direction.bandwidth_bps)
   in
   let hero =
-    hero_panel ~ansi ~width ~accent ~section:"live deck" ~headline:phase_text
+    hero_panel ~ansi ~animation_tick ~width ~accent ~section:"live deck"
+      ~headline:phase_text
       ~subtitle:detail
       ~meta_line:
         (String.concat "   "
@@ -1056,9 +1192,11 @@ let render_live ~ansi ~history (progress : progress) =
     if width >= 132 then
       let left, center, right = triple_widths width in
       [ hstack_many [ idle_card left; download_card center; upload_card right ] ]
-    else
+    else if width >= 104 then
       let left, right = pair_widths width in
       [ hstack_many [ idle_card left; download_card right ]; upload_card width ]
+    else
+      [ idle_card width; download_card width; upload_card width ]
   in
   let main_row =
     if width >= 132 then
@@ -1066,53 +1204,64 @@ let render_live ~ansi ~history (progress : progress) =
       [
         hstack_many
           [
-            panel ~width:left
-              ~title:(colorize ~ansi accent "Session telemetry")
-              (phase_lines ~ansi progress @ [ "" ] @ current_metric_lines ~ansi progress);
-            panel ~width:center
-              ~title:(colorize ~ansi 45 "Flow curves")
-              (curves_lines ~ansi progress);
-            panel ~width:right
-              ~title:(colorize ~ansi 214 "Recent benchmarks")
-              (history_table_lines ~limit:4 ~ansi history);
-          ];
-      ]
-    else
+             panel ~width:left
+               ~title:(colorize ~ansi accent "Session telemetry")
+               (phase_lines ~ansi progress @ [ "" ] @ current_metric_lines ~ansi progress);
+             panel ~width:center
+               ~title:(colorize ~ansi 45 "Flow curves")
+               (curves_lines ~ansi ~width:center progress);
+             panel ~width:right
+               ~title:(colorize ~ansi 214 "Recent benchmarks")
+               (history_table_lines ~limit:4 ~ansi ~width:right history);
+           ];
+       ]
+    else if width >= 108 then
       let left, right = pair_widths width in
       [
         hstack_many
           [
-            panel ~width:left
-              ~title:(colorize ~ansi accent "Session telemetry")
-              (phase_lines ~ansi progress @ [ "" ] @ current_metric_lines ~ansi progress);
-            panel ~width:right
-              ~title:(colorize ~ansi 45 "Flow curves")
-              (curves_lines ~ansi progress);
-          ];
+             panel ~width:left
+               ~title:(colorize ~ansi accent "Session telemetry")
+               (phase_lines ~ansi progress @ [ "" ] @ current_metric_lines ~ansi progress);
+             panel ~width:right
+               ~title:(colorize ~ansi 45 "Flow curves")
+               (curves_lines ~ansi ~width:right progress);
+           ];
+         panel ~width ~title:(colorize ~ansi 214 "Recent benchmarks")
+           (history_table_lines ~limit:4 ~ansi ~width history);
+       ]
+    else
+      [
+        panel ~width ~title:(colorize ~ansi accent "Session telemetry")
+          (phase_lines ~ansi progress @ [ "" ] @ current_metric_lines ~ansi progress);
+        panel ~width ~title:(colorize ~ansi 45 "Flow curves")
+          (curves_lines ~ansi ~width progress);
         panel ~width ~title:(colorize ~ansi 214 "Recent benchmarks")
-          (history_table_lines ~limit:4 ~ansi history);
+          (history_table_lines ~limit:4 ~ansi ~width history);
       ]
   in
   let compare =
     panel ~width ~title:(colorize ~ansi 118 "Pressure compare")
-      (history_summary_lines ~ansi ~current_latency ~current_download
+      (history_summary_lines ~ansi ~width ~current_latency ~current_download
          ~current_upload history)
   in
   join_blocks ([ hero ] @ cards @ main_row @ [ compare ])
 
-let render_history_page ~ansi ~history ~history_limit ~section ~headline
-    ~subtitle ~shortcuts =
+let render_history_page ~ansi ~animation_tick ~history ~history_limit
+    ~scale_label ~section ~headline ~subtitle ~shortcuts =
   let width = dashboard_width () in
   let current_latency, current_download, current_upload =
     latest_history_metrics history
   in
   let hero =
-    hero_panel ~ansi ~width ~accent:214 ~section ~headline ~subtitle
+    hero_panel ~ansi ~animation_tick ~width ~accent:214 ~section ~headline
+      ~subtitle
       ~meta_line:
         (String.concat "   "
            [
              info_badge ~ansi ~accent:214 "runs"
                (string_of_int (List.length history));
+             info_badge ~ansi ~accent:45 "scale" scale_label;
              info_badge ~ansi ~accent:238 "window"
                (Printf.sprintf "%d runs" history_limit);
              info_badge ~ansi ~accent:240 "file" (History.file_path ());
@@ -1125,46 +1274,58 @@ let render_history_page ~ansi ~history ~history_limit ~section ~headline
       [
         hstack_many
           [
-            panel ~width:left
-              ~title:(colorize ~ansi 214 "Recent runs")
-              (history_table_lines ~limit:6 ~ansi history);
-            panel ~width:center
-              ~title:(colorize ~ansi 45 "Trend deck")
-              (history_trend_lines ~ansi ~history);
-            panel ~width:right
-              ~title:(colorize ~ansi 111 "Storage + signal")
-              (history_storage_lines ~ansi ~history ~history_limit
-              @ [ "" ]
-              @ signal_snapshot_lines ~ansi ~history);
-          ];
-      ]
-    else
+             panel ~width:left
+               ~title:(colorize ~ansi 214 "Recent runs")
+               (history_table_lines ~limit:history_limit ~ansi ~width:left history);
+             panel ~width:center
+               ~title:(colorize ~ansi 45 "Trend deck")
+               (history_trend_lines ~ansi ~width:center ~history);
+             panel ~width:right
+               ~title:(colorize ~ansi 111 "Storage + signal")
+               (history_storage_lines ~ansi ~history ~history_limit
+               @ [ row ~label:"Scale" ~value:scale_label; "" ]
+               @ signal_snapshot_lines ~ansi ~width:right ~history);
+           ];
+       ]
+    else if width >= 108 then
       let left, right = pair_widths width in
       [
         hstack_many
           [
-            panel ~width:left
-              ~title:(colorize ~ansi 214 "Recent runs")
-              (history_table_lines ~limit:6 ~ansi history);
-            panel ~width:right
-              ~title:(colorize ~ansi 45 "Trend deck")
-              (history_trend_lines ~ansi ~history);
-          ];
+             panel ~width:left
+               ~title:(colorize ~ansi 214 "Recent runs")
+               (history_table_lines ~limit:history_limit ~ansi ~width:left history);
+             panel ~width:right
+               ~title:(colorize ~ansi 45 "Trend deck")
+               (history_trend_lines ~ansi ~width:right ~history);
+           ];
+         panel ~width ~title:(colorize ~ansi 111 "Storage + signal")
+           (history_storage_lines ~ansi ~history ~history_limit
+           @ [ row ~label:"Scale" ~value:scale_label; "" ]
+           @ signal_snapshot_lines ~ansi ~width ~history);
+       ]
+    else
+      [
+        panel ~width ~title:(colorize ~ansi 214 "Recent runs")
+          (history_table_lines ~limit:history_limit ~ansi ~width history);
+        panel ~width ~title:(colorize ~ansi 45 "Trend deck")
+          (history_trend_lines ~ansi ~width ~history);
         panel ~width ~title:(colorize ~ansi 111 "Storage + signal")
           (history_storage_lines ~ansi ~history ~history_limit
-          @ [ "" ]
-          @ signal_snapshot_lines ~ansi ~history);
+          @ [ row ~label:"Scale" ~value:scale_label; "" ]
+          @ signal_snapshot_lines ~ansi ~width ~history);
       ]
   in
   let compare =
     panel ~width ~title:(colorize ~ansi 118 "Aggregate compare")
-      (history_summary_lines ~ansi ~current_latency ~current_download
+      (history_summary_lines ~ansi ~width ~current_latency ~current_download
          ~current_upload history)
   in
   join_blocks ([ hero ] @ body @ [ compare ])
 
-let render_history ~ansi ~history =
-  render_history_page ~ansi ~history ~history_limit:(max 1 (List.length history))
+let render_history ~ansi ~animation_tick ~history =
+  render_history_page ~ansi ~animation_tick ~history
+    ~history_limit:(max 1 (List.length history)) ~scale_label:"all"
     ~section:"history deck" ~headline:"Saved benchmark history"
     ~subtitle:"Review recent runs, trend curves, and stored telemetry."
     ~shortcuts:
@@ -1175,14 +1336,15 @@ let render_history ~ansi ~history =
         ("RTT", "latency trend");
       ]
 
-let render_home ~ansi ~history ~settings ~selected =
+let render_home ~ansi ~animation_tick ~history ~settings ~selected =
   let width = dashboard_width () in
   let current_latency, current_download, current_upload =
     latest_history_metrics history
   in
   let accent, title, subtitle, _ = home_entries.(selected) in
   let hero =
-    hero_panel ~ansi ~width ~accent ~section:"launch pad" ~headline:title
+    hero_panel ~ansi ~animation_tick ~width ~accent ~section:"launch pad"
+      ~headline:title
       ~subtitle
       ~meta_line:
         (String.concat "   "
@@ -1210,43 +1372,52 @@ let render_home ~ansi ~history ~settings ~selected =
       [
         hstack_many
           [
-            panel ~width:left ~title:(colorize ~ansi accent "Navigation")
-              (render_home_menu_lines ~ansi ~selected);
-            panel ~width:center ~title:(colorize ~ansi 45 "Selected plan")
-              (focus_lines ~ansi ~selected ~history ~settings);
-            panel ~width:right ~title:(colorize ~ansi 214 "Signal deck")
-              (signal_snapshot_lines ~ansi ~history);
-          ];
-      ]
-    else
+             panel ~width:left ~title:(colorize ~ansi accent "Navigation")
+               (render_home_menu_lines ~ansi ~animation_tick ~selected);
+             panel ~width:center ~title:(colorize ~ansi 45 "Selected plan")
+               (focus_lines ~ansi ~selected ~history ~settings);
+             panel ~width:right ~title:(colorize ~ansi 214 "Signal deck")
+               (signal_snapshot_lines ~ansi ~width:right ~history);
+           ];
+       ]
+    else if width >= 108 then
       let left, right = pair_widths width in
       [
         hstack_many
           [
-            panel ~width:left ~title:(colorize ~ansi accent "Navigation")
-              (render_home_menu_lines ~ansi ~selected);
-            panel ~width:right ~title:(colorize ~ansi 45 "Selected plan")
-              (focus_lines ~ansi ~selected ~history ~settings);
-          ];
+             panel ~width:left ~title:(colorize ~ansi accent "Navigation")
+               (render_home_menu_lines ~ansi ~animation_tick ~selected);
+             panel ~width:right ~title:(colorize ~ansi 45 "Selected plan")
+               (focus_lines ~ansi ~selected ~history ~settings);
+           ];
+         panel ~width ~title:(colorize ~ansi 214 "Signal deck")
+           (signal_snapshot_lines ~ansi ~width ~history);
+       ]
+    else
+      [
+        panel ~width ~title:(colorize ~ansi accent "Navigation")
+          (render_home_menu_lines ~ansi ~animation_tick ~selected);
+        panel ~width ~title:(colorize ~ansi 45 "Selected plan")
+          (focus_lines ~ansi ~selected ~history ~settings);
         panel ~width ~title:(colorize ~ansi 214 "Signal deck")
-          (signal_snapshot_lines ~ansi ~history);
+          (signal_snapshot_lines ~ansi ~width ~history);
       ]
   in
   let story =
     panel ~width ~title:(colorize ~ansi 118 "Network story")
-      (history_summary_lines ~ansi ~current_latency ~current_download
+      (history_summary_lines ~ansi ~width ~current_latency ~current_download
          ~current_upload history)
   in
   join_blocks ([ hero ] @ body @ [ story ])
 
-let render_settings ~ansi ~history ~settings ~selected =
+let render_settings ~ansi ~animation_tick ~history ~settings ~selected =
   let width = dashboard_width () in
   let current_latency, current_download, current_upload =
     latest_history_metrics history
   in
   let selected_title, selected_value = (settings_entries ~settings).(selected) in
   let hero =
-    hero_panel ~ansi ~width ~accent:111 ~section:"control deck"
+    hero_panel ~ansi ~animation_tick ~width ~accent:111 ~section:"control deck"
       ~headline:selected_title
       ~subtitle:"Tune the throughput rails, autosave policy, and history depth."
       ~meta_line:
@@ -1274,42 +1445,63 @@ let render_settings ~ansi ~history ~settings ~selected =
       [
         hstack_many
           [
-            panel ~width:left ~title:(colorize ~ansi 111 "Tunables")
-              (render_settings_menu_lines ~ansi ~settings ~selected);
-            panel ~width:center ~title:(colorize ~ansi 45 "Selected detail")
-              (settings_detail_lines ~ansi ~selected ~settings);
-            panel ~width:right ~title:(colorize ~ansi 214 "Current signal")
-              (signal_snapshot_lines ~ansi ~history);
-          ];
-      ]
-    else
+             panel ~width:left ~title:(colorize ~ansi 111 "Tunables")
+               (render_settings_menu_lines ~ansi ~animation_tick ~settings
+                  ~selected);
+             panel ~width:center ~title:(colorize ~ansi 45 "Selected detail")
+               (settings_detail_lines ~ansi ~selected ~settings);
+             panel ~width:right ~title:(colorize ~ansi 214 "Current signal")
+               (signal_snapshot_lines ~ansi ~width:right ~history);
+           ];
+       ]
+    else if width >= 108 then
       let left, right = pair_widths width in
       [
         hstack_many
           [
-            panel ~width:left ~title:(colorize ~ansi 111 "Tunables")
-              (render_settings_menu_lines ~ansi ~settings ~selected);
-            panel ~width:right ~title:(colorize ~ansi 45 "Selected detail")
-              (settings_detail_lines ~ansi ~selected ~settings);
-          ];
+             panel ~width:left ~title:(colorize ~ansi 111 "Tunables")
+               (render_settings_menu_lines ~ansi ~animation_tick ~settings
+                  ~selected);
+             panel ~width:right ~title:(colorize ~ansi 45 "Selected detail")
+               (settings_detail_lines ~ansi ~selected ~settings);
+           ];
+         panel ~width ~title:(colorize ~ansi 214 "Current signal")
+           (signal_snapshot_lines ~ansi ~width ~history);
+       ]
+    else
+      [
+        panel ~width ~title:(colorize ~ansi 111 "Tunables")
+          (render_settings_menu_lines ~ansi ~animation_tick ~settings
+             ~selected);
+        panel ~width ~title:(colorize ~ansi 45 "Selected detail")
+          (settings_detail_lines ~ansi ~selected ~settings);
         panel ~width ~title:(colorize ~ansi 214 "Current signal")
-          (signal_snapshot_lines ~ansi ~history);
+          (signal_snapshot_lines ~ansi ~width ~history);
       ]
   in
   let story =
     panel ~width ~title:(colorize ~ansi 118 "Recent network story")
-      (history_summary_lines ~ansi ~current_latency ~current_download
+      (history_summary_lines ~ansi ~width ~current_latency ~current_download
          ~current_upload history)
   in
   join_blocks ([ hero ] @ body @ [ story ])
 
-let render_history_browser ~ansi ~history ~settings =
-  render_history_page ~ansi ~history ~history_limit:settings.history_limit
+let render_history_browser ~ansi ~animation_tick ~history ~settings
+    ~scale_label =
+  render_history_page ~ansi ~animation_tick ~history
+    ~history_limit:settings.history_limit ~scale_label
     ~section:"history lounge" ~headline:"Compare saved runs"
     ~subtitle:"See the recent timeline, trend deck, and current storage window."
-    ~shortcuts:[ ("B", "back"); ("Q", "quit"); ("RTT", "latency"); ("DL", "download") ]
+    ~shortcuts:
+      [
+        ("←→", "scale");
+        ("1-4", "24h/7d/30d/all");
+        ("B", "back");
+        ("Q", "quit");
+      ]
 
-let render_result ~ansi ~history ~settings ~(report : Model.report) =
+let render_result ~ansi ~animation_tick ~history ~settings
+    ~(report : Model.report) =
   let width = dashboard_width () in
   let comparison_history = history_before_report history report in
   let current_download =
@@ -1319,7 +1511,7 @@ let render_result ~ansi ~history ~settings ~(report : Model.report) =
     Option.bind report.upload (fun direction -> direction.bandwidth_bps)
   in
   let hero =
-    hero_panel ~ansi ~width ~accent:118 ~section:"result deck"
+    hero_panel ~ansi ~animation_tick ~width ~accent:118 ~section:"result deck"
       ~headline:"Run complete"
       ~subtitle:(server_string report.server ^ "  •  " ^ timestamp_string report.generated_at)
       ~meta_line:
@@ -1398,35 +1590,47 @@ let render_result ~ansi ~history ~settings ~(report : Model.report) =
     if width >= 132 then
       let left, center, right = triple_widths width in
       [ hstack_many [ idle_card left; download_card center; upload_card right ] ]
-    else
+    else if width >= 104 then
       let left, right = pair_widths width in
       [ hstack_many [ idle_card left; download_card right ]; upload_card width ]
+    else
+      [ idle_card width; download_card width; upload_card width ]
   in
   let body =
-    let left, right = pair_widths width in
-    [
-      hstack_many
-        [
-          panel ~width:left ~title:(colorize ~ansi 118 "Run summary")
-            (result_left_lines ~ansi report);
-          panel ~width:right ~title:(colorize ~ansi 45 "Curves + load")
-            (result_right_lines ~ansi report);
-        ];
-    ]
+    if width >= 108 then
+      let left, right = pair_widths width in
+      [
+        hstack_many
+          [
+             panel ~width:left ~title:(colorize ~ansi 118 "Run summary")
+               (result_left_lines ~ansi report);
+             panel ~width:right ~title:(colorize ~ansi 45 "Curves + load")
+               (result_right_lines ~ansi ~width:right report);
+           ];
+       ]
+    else
+      [
+        panel ~width ~title:(colorize ~ansi 118 "Run summary")
+          (result_left_lines ~ansi report);
+        panel ~width ~title:(colorize ~ansi 45 "Curves + load")
+          (result_right_lines ~ansi ~width report);
+      ]
   in
   let compare =
     panel ~width ~title:(colorize ~ansi 214 "Compare against history")
-      (history_summary_lines ~ansi ~current_latency:report.idle_latency_ms
+      (history_summary_lines ~ansi ~width ~current_latency:report.idle_latency_ms
          ~current_download ~current_upload comparison_history)
   in
   join_blocks ([ hero ] @ cards @ body @ [ compare ])
 
-let render_notice ~ansi ~title ~subtitle ~detail_lines ~footer_lines =
+let render_notice ~ansi ~animation_tick ~title ~subtitle ~detail_lines
+    ~footer_lines =
   let width = dashboard_width () in
   join_blocks
     [
-      hero_panel ~ansi ~width ~accent:196 ~section:"alert" ~headline:title
-        ~subtitle ~meta_line:(dim_text ~ansi "ohspeed needs your attention")
+      hero_panel ~ansi ~animation_tick ~width ~accent:196 ~section:"alert"
+        ~headline:title ~subtitle
+        ~meta_line:(dim_text ~ansi "ohspeed needs your attention")
         ~shortcuts:[ ("Enter", "home"); ("B", "back"); ("Q", "quit") ];
       panel ~width ~title:(colorize ~ansi 196 "Detail")
         (detail_lines @ [ "" ] @ footer_lines);

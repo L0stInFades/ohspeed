@@ -12,6 +12,9 @@
 - 默认启动交互式 TUI 首页
 - 重构版全屏 TUI：launch pad、live deck、result deck、history lounge
 - 彩色状态条、速率热区、迷你 sparkline 曲线
+- 终端尺寸变化后的实时重排，窄终端和宽终端布局不同
+- 轻量过场动画、心跳式状态刷新、screen transition
+- 历史页支持 `24h / 7d / 30d / all` 多时间尺度切换
 - 持久化历史记录与历史对比图
 
 默认端点使用 Cloudflare：
@@ -41,7 +44,7 @@ curl -fsSL https://raw.githubusercontent.com/L0stInFades/ohspeed/main/scripts/in
 指定版本：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/L0stInFades/ohspeed/main/scripts/install.sh | OHSPEED_VERSION=v0.4.0 bash
+curl -fsSL https://raw.githubusercontent.com/L0stInFades/ohspeed/main/scripts/install.sh | OHSPEED_VERSION=v0.5.0 bash
 ```
 
 通过 `opam` 直接从 GitHub 安装：
@@ -87,6 +90,11 @@ TUI 快捷键：
 - `Enter` 进入或执行
 - `Esc` / `b` 返回
 - `q` 退出
+
+历史页额外快捷键：
+
+- `←/→` 或 `[` / `]` 切换时间尺度
+- `1 / 2 / 3 / 4` 直接切到 `24h / 7d / 30d / all`
 
 保留原来的直接命令模式：
 

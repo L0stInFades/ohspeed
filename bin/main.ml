@@ -89,7 +89,7 @@ let run preset output download_url upload_url meta_url no_meta latency_samples
     `Error (false, "--live requires a TTY stdout")
   else if show_history then
     let history = History.load ~limit:history_limit () in
-    print_endline (Tui.render_history ~ansi ~history);
+    print_endline (Tui.render_history ~ansi ~animation_tick:0 ~history);
     `Ok ()
   else
     match
@@ -127,7 +127,9 @@ let run preset output download_url upload_url meta_url no_meta latency_samples
           | Some session ->
               Tui.start session;
               Some (fun progress ->
-                  Tui.render session (Tui.render_live ~ansi:true ~history progress))
+                  Tui.render session
+                    (Tui.render_live ~ansi:true ~animation_tick:0 ~history
+                       progress))
         in
         let result =
           Fun.protect
@@ -252,7 +254,7 @@ let no_save_history_arg =
 
 let cmd =
   let doc = "speedtest-grade OCaml CLI for quick network measurement" in
-  let info = Cmd.info "ohspeed" ~version:"0.4.0" ~doc in
+  let info = Cmd.info "ohspeed" ~version:"0.5.0" ~doc in
   let term =
     Term.(
       ret
