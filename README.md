@@ -44,7 +44,7 @@ curl -fsSL https://raw.githubusercontent.com/L0stInFades/ohspeed/main/scripts/in
 指定版本：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/L0stInFades/ohspeed/main/scripts/install.sh | OHSPEED_VERSION=v0.5.0 bash
+curl -fsSL https://raw.githubusercontent.com/L0stInFades/ohspeed/main/scripts/install.sh | OHSPEED_VERSION=v0.5.1 bash
 ```
 
 通过 `opam` 直接从 GitHub 安装：
