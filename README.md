@@ -6,6 +6,7 @@
 - 并发下载 / 上传
 - 分级放大请求尺寸，直到链路被充分压满
 - 使用延迟分位数和带宽高分位数归约结果
+- 基于 `OCaml 5 + Eio + cohttp-eio` 的 direct-style effects 并发测量引擎
 - 支持文本输出和 JSON 输出
 - 支持高性能终端实时可视化 dashboard
 - 默认启动交互式 TUI 首页
@@ -39,7 +40,7 @@ curl -fsSL https://raw.githubusercontent.com/L0stInFades/ohspeed/main/scripts/in
 指定版本：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/L0stInFades/ohspeed/main/scripts/install.sh | OHSPEED_VERSION=v0.2.0 bash
+curl -fsSL https://raw.githubusercontent.com/L0stInFades/ohspeed/main/scripts/install.sh | OHSPEED_VERSION=v0.3.0 bash
 ```
 
 通过 `opam` 直接从 GitHub 安装：
@@ -166,6 +167,7 @@ $XDG_STATE_HOME/ohspeed/history.jsonl
 这版终端可视化没有强依赖一个重量级 TUI 框架，而是采用：
 
 - 纯 OCaml 的测量与渲染主逻辑
+- `Eio + cohttp-eio` 的 effect handlers / direct-style 并发 I/O
 - ANSI + alt-screen 的轻量全屏刷新
 - 缓存前一帧，避免重复输出相同画面
 - `terminal_size` 只负责读取终端尺寸

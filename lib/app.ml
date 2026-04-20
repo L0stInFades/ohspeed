@@ -1,4 +1,3 @@
-open Lwt.Infix
 open Model
 
 type key =
@@ -152,15 +151,13 @@ let run_measurement ~ansi ~session ~endpoints state preset =
     in
     let history = current_history state in
     let result =
-      Lwt_main.run
-        (Lwt.catch
-           (fun () ->
-             Measure.run
-               ~on_progress:(fun progress ->
-                 Tui.render session (Tui.render_live ~ansi ~history progress))
-               config
-             >|= fun report -> Stdlib.Ok report)
-           (fun exn -> Lwt.return (Stdlib.Error (Printexc.to_string exn))))
+      try
+        Stdlib.Ok
+          (Measure.run
+             ~on_progress:(fun progress ->
+               Tui.render session (Tui.render_live ~ansi ~history progress))
+             config)
+      with exn -> Stdlib.Error (Printexc.to_string exn)
     in
     match result with
     | Stdlib.Error message -> state.screen <- Alert message

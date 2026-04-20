@@ -2,4 +2,4 @@
  (name main)
  (public_name ohspeed)
  (modules main)
- (libraries ohspeed cmdliner lwt.unix))
+ (libraries ohspeed cmdliner))

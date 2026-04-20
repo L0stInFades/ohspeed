@@ -2,4 +2,14 @@
  (name ohspeed)
  (public_name ohspeed)
  (modules model stats measure report history tui app ohspeed)
- (libraries cohttp-lwt-unix fmt yojson unix lwt lwt.unix terminal_size))
+ (libraries
+  cohttp-eio
+  fmt
+  yojson
+  unix
+  eio
+  eio_main
+  tls-eio
+  ca-certs
+  mirage-crypto-rng.unix
+  terminal_size))

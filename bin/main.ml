@@ -1,6 +1,5 @@
 open Cmdliner
 open Ohspeed
-open Lwt.Infix
 
 let ( let* ) = Result.bind
 
@@ -134,14 +133,8 @@ let run preset output download_url upload_url meta_url no_meta latency_samples
           Fun.protect
             ~finally:(fun () -> Option.iter Tui.stop session)
             (fun () ->
-              let task =
-                Lwt.catch
-                  (fun () -> Measure.run ?on_progress config >|= fun report -> Ok report)
-                  (fun exn ->
-                    let msg = Printexc.to_string exn in
-                    Lwt.return (Error msg))
-              in
-              Lwt_main.run task)
+              try Ok (Measure.run ?on_progress config)
+              with exn -> Error (Printexc.to_string exn))
         in
         (match result with
         | Error msg -> `Error (false, msg)
@@ -259,7 +252,7 @@ let no_save_history_arg =
 
 let cmd =
   let doc = "speedtest-grade OCaml CLI for quick network measurement" in
-  let info = Cmd.info "ohspeed" ~version:"0.2.0" ~doc in
+  let info = Cmd.info "ohspeed" ~version:"0.3.0" ~doc in
   let term =
     Term.(
       ret

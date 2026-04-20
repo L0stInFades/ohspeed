@@ -4,9 +4,9 @@
 
 (package
  (name ohspeed)
- (synopsis "Speedtest-grade OCaml CLI with a live terminal dashboard")
+ (synopsis "Speedtest-grade OCaml 5 CLI with an Eio-powered live terminal dashboard")
  (description
-  "A fast OCaml CLI that measures idle latency, jitter, concurrent download and upload throughput against configurable endpoints, with a high-performance live TUI and saved history.")
+  "A fast OCaml 5 CLI that measures idle latency, jitter, concurrent download and upload throughput against configurable endpoints, using an effects-based Eio engine with a high-performance live TUI and saved history.")
  (authors "Raaaaaymond")
  (maintainers "Raaaaaymond <wbc20230610@outlook.com>")
  (license "MIT")
@@ -17,9 +17,13 @@
   (ocaml (>= 5.4))
   dune
   cmdliner
-  cohttp-lwt-unix
+  cohttp-eio
+  eio
+  eio_main
   fmt
   terminal_size
-  tls-lwt
+  tls-eio
+  ca-certs
+  mirage-crypto-rng
   yojson
   alcotest))
