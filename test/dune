@@ -1,0 +1,4 @@
+(test
+ (name stats_test)
+ (modules stats_test)
+ (libraries ohspeed alcotest))

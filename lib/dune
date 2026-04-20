@@ -1,0 +1,5 @@
+(library
+ (name ohspeed)
+ (public_name ohspeed)
+ (modules model stats measure report history tui ohspeed)
+ (libraries cohttp-lwt-unix fmt yojson unix lwt lwt.unix terminal_size))
