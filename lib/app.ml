@@ -61,6 +61,25 @@ let history_scale_options = [| Day; Week; Month; All |]
 let frame_interval_s = 1. /. 12.
 let transition_duration_s = 0.18
 
+external win32_get_console_mode : bool -> int32
+  = "ohspeed_win32_get_console_mode"
+
+external win32_set_console_mode : bool -> int32 -> unit
+  = "ohspeed_win32_set_console_mode"
+
+external win32_kbhit : unit -> bool = "ohspeed_win32_kbhit"
+external win32_getch : unit -> int = "ohspeed_win32_getch"
+
+type input_backend =
+  | Posix of Unix.file_descr
+  | Win32
+
+let win32_input = false
+let win32_output = true
+let win32_enable_line_input = 0x0002l
+let win32_enable_echo_input = 0x0004l
+let win32_enable_virtual_terminal_processing = 0x0004l
+
 let cycle_history_limit current delta =
   let current_index =
     let rec find index =
@@ -130,16 +149,35 @@ let set_screen state screen =
         duration_s = transition_duration_s;
       }
 
-let pause seconds =
-  ignore (Unix.select [] [] [] seconds)
+let pause seconds = Unix.sleepf seconds
 
 let stdin_fd () = Unix.descr_of_in_channel stdin
 let stdout_fd () = Unix.descr_of_out_channel stdout
 
-let wait_for_input fd timeout =
+let wait_for_posix_input fd timeout =
   match Unix.select [ fd ] [] [] timeout with
   | [], _, _ -> false
   | _ -> true
+
+let wait_for_win32_input timeout =
+  let deadline = Unix.gettimeofday () +. timeout in
+  let rec loop () =
+    if win32_kbhit () then
+      true
+    else
+      let remaining = deadline -. Unix.gettimeofday () in
+      if remaining <= 0. then
+        false
+      else (
+        pause (min 0.01 remaining);
+        loop ())
+  in
+  loop ()
+
+let wait_for_input input timeout =
+  match input with
+  | Posix fd -> wait_for_posix_input fd timeout
+  | Win32 -> wait_for_win32_input timeout
 
 let read_byte fd =
   let buffer = Bytes.create 1 in
@@ -147,15 +185,15 @@ let read_byte fd =
   | 0 -> None
   | _ -> Some (Bytes.get buffer 0)
 
-let read_key fd =
+let read_posix_key fd =
   match read_byte fd with
   | None -> Escape
   | Some ('\r' | '\n') -> Enter
   | Some '\027' ->
-      if wait_for_input fd 0.01 then
+      if wait_for_posix_input fd 0.01 then
         match read_byte fd with
         | Some '[' ->
-            if wait_for_input fd 0.01 then
+            if wait_for_posix_input fd 0.01 then
               (match read_byte fd with
               | Some 'A' -> Up
               | Some 'B' -> Down
@@ -171,17 +209,63 @@ let read_key fd =
         Escape
   | Some ch -> Char ch
 
+let key_of_char_code code =
+  if code >= 0 && code <= 255 then
+    Char (Char.chr code)
+  else
+    Escape
+
+let read_win32_key () =
+  match win32_getch () with
+  | 10 | 13 -> Enter
+  | 27 -> Escape
+  | 0 | 224 -> (
+      match win32_getch () with
+      | 72 -> Up
+      | 80 -> Down
+      | 75 -> Left
+      | 77 -> Right
+      | code -> key_of_char_code code)
+  | code -> key_of_char_code code
+
+let read_key = function
+  | Posix fd -> read_posix_key fd
+  | Win32 -> read_win32_key ()
+
 let with_raw_input fd f =
-  let saved = Unix.tcgetattr fd in
-  let raw = Unix.tcgetattr fd in
-  raw.Unix.c_icanon <- false;
-  raw.Unix.c_echo <- false;
-  raw.Unix.c_vmin <- 1;
-  raw.Unix.c_vtime <- 0;
-  Unix.tcsetattr fd Unix.TCSAFLUSH raw;
-  Fun.protect
-    ~finally:(fun () -> Unix.tcsetattr fd Unix.TCSAFLUSH saved)
-    f
+  if Sys.win32 then (
+    let input_mode = win32_get_console_mode win32_input in
+    let output_mode = win32_get_console_mode win32_output in
+    let raw_input =
+      Int32.logand input_mode
+        (Int32.lognot
+           (Int32.logor win32_enable_line_input win32_enable_echo_input))
+    in
+    let vt_output =
+      Int32.logor output_mode win32_enable_virtual_terminal_processing
+    in
+    let restore () =
+      (try win32_set_console_mode win32_input input_mode with _ -> ());
+      try win32_set_console_mode win32_output output_mode with _ -> ()
+    in
+    (try
+       win32_set_console_mode win32_input raw_input;
+       win32_set_console_mode win32_output vt_output
+     with exn ->
+       restore ();
+       raise exn);
+    Fun.protect ~finally:restore f)
+  else
+    let saved = Unix.tcgetattr fd in
+    let raw = Unix.tcgetattr fd in
+    raw.Unix.c_icanon <- false;
+    raw.Unix.c_echo <- false;
+    raw.Unix.c_vmin <- 1;
+    raw.Unix.c_vtime <- 0;
+    Unix.tcsetattr fd Unix.TCSAFLUSH raw;
+    Fun.protect
+      ~finally:(fun () -> Unix.tcsetattr fd Unix.TCSAFLUSH saved)
+      f
 
 let current_history state =
   match state.screen with
@@ -369,6 +453,7 @@ let run_interactive ~endpoints () =
     Error "interactive TUI requires a TTY on stdin and stdout"
   else
     let session = Tui.create_session stdout in
+    let input_backend = if Sys.win32 then Win32 else Posix input in
     let state =
         {
           screen = Home;
@@ -381,24 +466,29 @@ let run_interactive ~endpoints () =
         }
     in
     let ansi = true in
-    with_raw_input input (fun () ->
-        Fun.protect
-          ~finally:(fun () -> Tui.stop session)
-          (fun () ->
-            Tui.start session;
-            try
-              while true do
-                state.animation_tick <- state.animation_tick + 1;
-                Tui.render session (render_screen ~ansi state);
-                if wait_for_input input frame_interval_s then
-                  let key = read_key input in
-                  match state.screen with
-                  | Home -> handle_home_key ~ansi ~session ~endpoints state key
-                  | Settings -> handle_settings_key state key
-                  | History -> handle_history_key state key
-                  | Result report ->
-                      handle_result_key ~ansi ~session ~endpoints state report key
-                  | Alert _ -> handle_error_key state key
-              done;
-              Ok ()
-            with Quit -> Ok ()))
+    try
+      with_raw_input input (fun () ->
+          Fun.protect
+            ~finally:(fun () -> Tui.stop session)
+            (fun () ->
+              Tui.start session;
+              try
+                while true do
+                  state.animation_tick <- state.animation_tick + 1;
+                  Tui.render session (render_screen ~ansi state);
+                  if wait_for_input input_backend frame_interval_s then
+                    let key = read_key input_backend in
+                    match state.screen with
+                    | Home ->
+                        handle_home_key ~ansi ~session ~endpoints state key
+                    | Settings -> handle_settings_key state key
+                    | History -> handle_history_key state key
+                    | Result report ->
+                        handle_result_key ~ansi ~session ~endpoints state report
+                          key
+                    | Alert _ -> handle_error_key state key
+                done;
+                Ok ()
+              with Quit -> Ok ()))
+    with exn ->
+      Error ("interactive TUI failed: " ^ Printexc.to_string exn)

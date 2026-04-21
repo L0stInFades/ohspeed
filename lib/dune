@@ -2,6 +2,9 @@
  (name ohspeed)
  (public_name ohspeed)
  (modules model stats measure report history tui app ohspeed)
+ (foreign_stubs
+  (language c)
+  (names win32_console))
  (libraries
   cohttp-eio
   fmt

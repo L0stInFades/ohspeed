@@ -254,7 +254,7 @@ let no_save_history_arg =
 
 let cmd =
   let doc = "speedtest-grade OCaml CLI for quick network measurement" in
-  let info = Cmd.info "ohspeed" ~version:"0.5.5" ~doc in
+  let info = Cmd.info "ohspeed" ~version:"0.5.6" ~doc in
   let term =
     Term.(
       ret

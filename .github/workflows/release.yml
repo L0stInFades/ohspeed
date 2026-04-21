@@ -50,6 +50,7 @@ jobs:
           opam pin add -yn uutf "https://github.com/dbuenzli/uutf.git#v1.0.4"
       - run: opam install . --deps-only --with-test
       - run: opam exec -- dune runtest
+      - run: opam exec -- dune exec -- ./bin/main.exe --version
       - name: Package Unix release
         if: runner.os != 'Windows'
         run: opam exec -- ./scripts/package-release.sh dist "${{ matrix.platform }}" "${{ matrix.arch }}"
