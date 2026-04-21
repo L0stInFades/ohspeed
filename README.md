@@ -52,11 +52,11 @@ irm https://raw.githubusercontent.com/L0stInFades/ohspeed/main/scripts/install.p
 指定版本：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/L0stInFades/ohspeed/main/scripts/install.sh | OHSPEED_VERSION=v0.5.4 bash
+curl -fsSL https://raw.githubusercontent.com/L0stInFades/ohspeed/main/scripts/install.sh | OHSPEED_VERSION=v0.5.5 bash
 ```
 
 ```powershell
-$env:OHSPEED_VERSION = "v0.5.4"; irm https://raw.githubusercontent.com/L0stInFades/ohspeed/main/scripts/install.ps1 | iex
+$env:OHSPEED_VERSION = "v0.5.5"; irm https://raw.githubusercontent.com/L0stInFades/ohspeed/main/scripts/install.ps1 | iex
 ```
 
 通过 `opam` 直接从 GitHub 安装：

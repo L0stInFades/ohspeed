@@ -33,6 +33,7 @@ jobs:
           opam pin add -yn cmdliner "https://github.com/dbuenzli/cmdliner.git#v2.1.0"
           opam pin add -yn fmt "https://github.com/dbuenzli/fmt.git#v0.11.0"
           opam pin add -yn fpath "https://github.com/dbuenzli/fpath.git#v0.7.3"
+          opam pin add -yn hmap.0.8.1 "https://github.com/dbuenzli/hmap.git#e54eb3f7d7dbada0724fd023c334d0b5a29c8479"
           opam pin add -yn mtime "https://github.com/dbuenzli/mtime.git#v2.1.0"
           opam pin add -yn rresult "https://github.com/dbuenzli/rresult.git#v0.7.0"
           opam pin add -yn topkg "https://github.com/dbuenzli/topkg.git#v1.1.1"
