@@ -37,14 +37,26 @@ https://github.com/L0stInFades/ohspeed
 
 二进制安装：
 
+macOS / Linux:
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/L0stInFades/ohspeed/main/scripts/install.sh | bash
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/L0stInFades/ohspeed/main/scripts/install.ps1 | iex
 ```
 
 指定版本：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/L0stInFades/ohspeed/main/scripts/install.sh | OHSPEED_VERSION=v0.5.2 bash
+curl -fsSL https://raw.githubusercontent.com/L0stInFades/ohspeed/main/scripts/install.sh | OHSPEED_VERSION=v0.5.3 bash
+```
+
+```powershell
+$env:OHSPEED_VERSION = "v0.5.3"; irm https://raw.githubusercontent.com/L0stInFades/ohspeed/main/scripts/install.ps1 | iex
 ```
 
 通过 `opam` 直接从 GitHub 安装：
