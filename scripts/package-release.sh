@@ -40,11 +40,15 @@ mkdir -p "$output_dir"
 cp "_build/install/default/bin/ohspeed" "$stage/ohspeed"
 cp README.md LICENSE "$stage/"
 
-tar -C "$stage" -czf "$output_dir/${asset}.tar.gz" ohspeed README.md LICENSE
+archive="$output_dir/${asset}.tar.gz"
+checksum="$archive.sha256"
+checksum_name="$(basename "$archive")"
+
+tar -C "$stage" -czf "$archive" ohspeed README.md LICENSE
 if command -v shasum >/dev/null 2>&1; then
-  shasum -a 256 "$output_dir/${asset}.tar.gz" > "$output_dir/${asset}.tar.gz.sha256"
+  shasum -a 256 "$archive" | sed "s#  .*#  $checksum_name#" > "$checksum"
 elif command -v sha256sum >/dev/null 2>&1; then
-  sha256sum "$output_dir/${asset}.tar.gz" > "$output_dir/${asset}.tar.gz.sha256"
+  sha256sum "$archive" | sed "s#  .*#  $checksum_name#" > "$checksum"
 else
   echo "missing checksum tool: need shasum or sha256sum" >&2
   exit 1

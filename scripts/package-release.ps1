@@ -87,7 +87,8 @@ try {
   while ($queue.Count -gt 0) {
     $current = $queue.Dequeue()
     foreach ($dll in Get-DllNames $current) {
-      if ($skipDlls -contains $dll.ToLowerInvariant()) {
+      $lowerDll = $dll.ToLowerInvariant()
+      if (($skipDlls -contains $lowerDll) -or ($lowerDll -like "api-ms-win-*.dll")) {
         continue
       }
       if (-not $seen.Add($dll)) {
