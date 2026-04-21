@@ -32,7 +32,7 @@ jobs:
             arch: amd64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: ${{ matrix.ocaml }}
@@ -59,7 +59,7 @@ jobs:
         run: |
           opam exec -- dune build '@install'
           pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1 -OutputDir dist -Platform "${{ matrix.platform }}" -Arch "${{ matrix.arch }}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: release-${{ matrix.platform }}-${{ matrix.arch }}
           path: |
@@ -71,7 +71,7 @@ jobs:
     needs: build
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           path: dist
       - uses: softprops/action-gh-release@v2
