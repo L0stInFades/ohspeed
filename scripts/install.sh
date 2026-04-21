@@ -48,7 +48,12 @@ mkdir -p "$INSTALL_DIR"
 archive="$tmpdir/$asset"
 
 echo "downloading $url"
-curl -fsSL "$url" -o "$archive"
+if ! curl -fsSL "$url" -o "$archive"; then
+  echo "failed to download $asset from release $VERSION" >&2
+  echo "this usually means the release does not have a binary for ${platform}/${target_arch}" >&2
+  echo "available releases: https://github.com/${REPO}/releases" >&2
+  exit 1
+fi
 tar -xzf "$archive" -C "$tmpdir"
 install -m 0755 "$tmpdir/ohspeed" "$INSTALL_DIR/ohspeed"
 
