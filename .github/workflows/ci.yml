@@ -26,6 +26,17 @@ jobs:
       - uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: ${{ matrix.ocaml }}
+      - name: Use GitHub mirrors for Erratique packages
+        run: |
+          opam pin add -yn astring "https://github.com/dbuenzli/astring.git#v0.8.5"
+          opam pin add -yn bos "https://github.com/dbuenzli/bos.git#v0.2.1"
+          opam pin add -yn cmdliner "https://github.com/dbuenzli/cmdliner.git#v2.1.0"
+          opam pin add -yn fmt "https://github.com/dbuenzli/fmt.git#v0.11.0"
+          opam pin add -yn fpath "https://github.com/dbuenzli/fpath.git#v0.7.3"
+          opam pin add -yn mtime "https://github.com/dbuenzli/mtime.git#v2.1.0"
+          opam pin add -yn rresult "https://github.com/dbuenzli/rresult.git#v0.7.0"
+          opam pin add -yn topkg "https://github.com/dbuenzli/topkg.git#v1.1.1"
+          opam pin add -yn uutf "https://github.com/dbuenzli/uutf.git#v1.0.4"
       - run: opam install . --deps-only --with-test
       - run: opam exec -- dune build
       - run: opam exec -- dune runtest
